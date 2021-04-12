@@ -57,3 +57,68 @@ def draw_hist(real_data, gen, device, df):
     plt.close('all')
     buf.seek(0)
     return buf
+
+
+class SequentialLinearModule(nn.Module):
+
+
+    def __init__(self, in_dim, out_dim, layer_sizes, activation, out_activation):
+
+        super().__init__()
+        
+        # layers is the list that contains the sizes of linear layers between input and output
+        layer_sizes.append(out_dim)
+        layers = [] # list of the modules that we put into sequential
+        layers.append(nn.Linear(in_dim, layer_sizes[0]))
+        for i in range(len(layer_sizes)-1):
+            layers.append(activation()) # activation after the last linear
+            layers.append(nn.BatchNorm1d(layer_sizes[i])) # batchnorm
+            layers.append(nn.Linear(layer_sizes[i], layer_sizes[i+1])) # linear
+        layers.append(out_activation()) # final activation
+        self.f = nn.Sequential(*layers) # combine everything
+
+    def forward(self, x):
+        return self.f(x)
+    
+class Generator(SequentialLinearModule):
+    def __init__(self, noise_dim, n_dim, layer_sizes):
+        super().__init__(noise_dim, n_dim, layer_sizes, nn.ReLU, nn.Identity)
+        self.noise_dim = noise_dim
+        
+class Discriminator(SequentialLinearModule):
+    def __init__(self, n_dim, layers):
+        super().__init__(n_dim, 1, layer_sizes, nn.LeakyReLU, nn.Sigmoid)
+        
+class Critic(SequentialLinearModule):
+    def __init__(self, n_dim, layer_sizes):
+        super().__init__(n_dim, 1, layer_sizes, nn.LeakyReLU, nn.LeakyReLU)
+        
+class ChainedGenerator(nn.Module):
+    # note that layer_sizes are for a single variable, thus the generator itself is going to be n_dim times larger
+    def __init__(self, noise_dim, n_dim, layer_sizes):
+        
+        super().__init__()
+        
+        self.n_dim = n_dim
+        self.noise_dim = noise_dim
+        
+        activation = nn.ReLU
+        out_activation = nn.Identity
+        
+        self.layers = nn.ModuleList()
+        for i in range(n_dim):
+            self.layers.append(SequentialLinearModule(noise_dim//n_dim + i,1,layer_sizes, activation, out_activation))
+                
+    def forward(self, noise):
+        noise = noise.view(noise.shape[0], self.n_dim, self.noise_dim//self.n_dim)
+        noise_list = [noise[:,i,:] for i in range(self.n_dim)]
+        variables = []
+        for i in range(self.n_dim):
+            layer_input = torch.cat([noise_list[i], *variables], dim=1)
+            layer_output = self.layers[i](layer_input)
+            variables.append(layer_output)
+        return torch.cat(variables, dim=1)
+    
+    def __repr__(self):
+        
+        return '\n'.join([str(i) for i in self.layers])
